@@ -1,7 +1,7 @@
 from groq import Groq
 import streamlit as st
 import json as jp
-client = Groq(api_key="xxx")
+client = Groq(api_key="xyz")
 
 
 RULES= '''
