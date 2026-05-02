@@ -1,8 +1,14 @@
+from langchain_community.document_loaders import PyPDFLoader
+from langchain_text_splitters import RecursiveCharacterTextSplitter
+from langchain_community.vectorstores import Chroma
+from langchain_community.embeddings import SentenceTransformerEmbeddings
 from groq import Groq
 import streamlit as st
 import json as jp
+
 client = Groq(api_key="xyz")
 
+   
 
 RULES= '''
 
@@ -16,6 +22,7 @@ RULES= '''
         8. Stay consistent in tone and behavior.
         
         '''
+mode_rules= ""
 st.markdown("<h1 style='text-align: center; color: #00d4ff; font-family: Arial; letter-spacing: 2px;'>🤖 AI Bot</h1>", unsafe_allow_html=True)
 
 def load():
@@ -56,26 +63,54 @@ for message in st.session_state.messages:
 
 
 
-user_input = st.chat_input("your message")
-if user_input:
-    st.session_state.messages.append({"role":"user","content":user_input})
-    with st.chat_message("user"):
-        st.write(user_input)
-        save()
+
+uploaded_file=st.file_uploader("Upload a PDF",type="pdf")
+
+@st.cache_resource
+def load_db(_file):
+    with open("temp.pdf","wb") as f:
+        f.write(_file.read())
+    loader = PyPDFLoader("temp.pdf")
+    pages = loader.load()
+
+    splitters = RecursiveCharacterTextSplitter(chunk_size=500, chunk_overlap=50)
+    chunks = splitters.split_documents(pages)
+
+    embedding = SentenceTransformerEmbeddings(model_name="all-MiniLM-L6-v2")
+
+    db = Chroma.from_documents(chunks, embedding, persist_directory="./chroma_db")
     
-    response = client.chat.completions.create(
-        messages=[{"role": "user", "content": "Hello!"}],
+
+    return db   
+
+if uploaded_file:
+    db=load_db(uploaded_file)
+    user_input = st.chat_input("your message")
+    if user_input:
+        results = db.similarity_search(user_input,k=3)
+        context = "\n".join([r.page_content for r in results])
+        st.session_state.messages.append({"role":"user","content":user_input})
+        with st.chat_message("user"):
+            st.write(user_input)
+            save()
+        
+        response = client.chat.completions.create(
+        messages=[
+            {"role": "system", "content": RULES + "\n" + mode_rules + "\nUse the context below to answer."},
+            *st.session_state.messages[1:],  # keep conversation memory
+            {"role": "user", "content": f"Context:\n{context}\n\nQuestion: {user_input}"}
+        ],
         model="llama-3.3-70b-versatile",
-    )
+        )
 
-    reply = response.choices[0].message.content
-    st.session_state.messages.append({"role":"assistant","content":reply})
-    with st.chat_message("assistant"):
-        st.write(reply)
-        save()
+        reply = response.choices[0].message.content
+        st.session_state.messages.append({"role":"assistant","content":reply})
+        with st.chat_message("assistant"):
+            st.write(reply)
+            save()
 
 
-elif st.button("show history"):
+if st.button("show history"):
     history(messages=st.session_state.messages)
             
 elif st.button("clear history"):
